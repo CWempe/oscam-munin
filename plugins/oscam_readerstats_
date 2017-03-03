@@ -332,7 +332,7 @@ if ($ARGV[0] and $ARGV[0] =~ /^\s*suggest\s*$/i)
 if (exists $ARGV[0] and $ARGV[0] =~ /^\s*config\s*$/i) 
 {
 
-	print "graph_title OSCam readerstats\n";
+	print "graph_title OSCam readerstats $name\n";
 	print "graph_args --base 1000 -r --logarithmic\n";
 	print "graph_category oscam\n";
 	print "graph_vlabel %\n";

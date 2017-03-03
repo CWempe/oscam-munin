@@ -117,17 +117,17 @@ my $UA = exists $ENV{'ua'} ? $ENV{'ua'} : 'oscam-munin-verifier/0.1';
 my $USERNAME = exists $ENV{'username'} ? $ENV{'username'} : 'root';
 my $PASSWORD = exists $ENV{'password'} ? $ENV{'password'} : 'oscam';
 
+# Suggest Mode: Get Filename User/Client
+my $name = "";
+if ($0 =~ /oscam_userstats_(.+)*$/) 
+{
+    $name = $1;
+}
+
 # Extract XML and show results
 sub get_xml
 {
   my ( $CONTENT, $MODE ) = @_;
-
-  # Suggest Mode: Get Filename User/Client
-  my $name = "";
-  if ($0 =~ /oscam_userstats_(.+)*$/) 
-  {
-	$name = $1;
-  }
 
   # apt-get install libxml-libxml-perl
   # Or with cpan -> install XML::LibXML
@@ -255,7 +255,7 @@ if ($ARGV[0] and $ARGV[0] =~ /^\s*suggest\s*$/i) {
 
 ## Munin config method.
 if (exists $ARGV[0] and $ARGV[0] =~ /^\s*config\s*$/i) {
-  print "graph_title OSCam userstats\n";
+  print "graph_title OSCam userstats $name\n";
   print "graph_args --base 1000 -r --logarithmic\n";
   print "graph_category oscam\n";
   print "graph_vlabel %\n";
