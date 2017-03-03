@@ -1,0 +1,526 @@
+#!/usr/bin/perl -w
+# -*- mode: cperl; mode: autopair -*-
+# Magic markers:
+#%# family=auto
+#%# capabilities=autoconf suggest
+# oscam_readerstats_ - Wildcard-Plugin to determine the current readerstats rate for OSCam.
+
+# Copyright (C) 2013 MoonMaker <moonmaker@gmx.de>
+
+# Author: MoonMaker <moonmaker@gmx.de>
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# .
+# This package is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# .
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+# .
+# On Debian systems, the complete text of the GNU General
+# Public License version 3 can be found in "/usr/share/common-licenses/GPL-3".
+
+=head1 NAME
+
+oscam_readerstats_ - Wildcard-plugin to monitor OSCam readerstats.
+=encoding utf8
+
+=head1 APPLICABLE SYSTEMS
+
+Any oscam host
+
+=head1 CONFIGURATION
+
+To monitor a user link oscam_readerstats_<service> to this file. E.g.
+
+  ln -s /usr/share/munin/plugins/oscam_readerstats_ /etc/munin/plugins/oscam_readerstats_smargo
+
+This shows the default configuration of this plugin. You can override
+the status URL and User Agent.
+
+  [oscam_*]
+  env.host http://localhost:8888
+  env.ua oscam-status-verifier/0.1
+  env.username root
+  env.password oscam
+  env.status_url oscamapi.html?part=status&appendlog=0
+
+  [oscam_userstats_*]
+  env.userstats_url oscamapi.html?part=userstats
+  group user
+
+  [oscam_totalstats]
+  env.totalstats_url oscamapi.html?part=userstats
+
+  [oscam_uptime]
+  env.uptime_url oscamapi.html?part=status
+
+  [oscam_readerstats_*]
+  env.readerstats_url oscamapi.html?part=readerstats&label=<readername>
+
+=head1 MAGIC MARKERS
+
+  #%# family=auto
+  #%# capabilities=autoconf suggest
+
+=head1 VERSION
+
+1.1
+
+=head1 BUGS
+
+None known
+
+=head1 AUTHOR
+
+MoonMaker <moonmaker@gmx.de>
+
+=head1 REPOSITORY
+
+Source code at https://code.launchpad.net/~oscam/+junk/oscam-munin
+
+=head1 LICENSE
+
+GPLv3 (http://www.gnu.org/licenses/gpl.txt)
+
+=cut
+
+use Munin::Plugin;
+
+
+my $ret = undef;
+
+if (! eval "require LWP::UserAgent;") {
+  $ret = "LWP::UserAgent not found";
+}
+
+if (! eval "require XML::LibXML;") {
+  $ret = "XML::LibXML not found";
+}
+
+chomp(my $fqdn=`hostname -f`);
+
+
+## Environment defined variables.
+## The default URL is oscamapi.html?part=readerstats&label=<readername> if different set it in the environment.
+my $HOST = exists $ENV{'host'} ? $ENV{'host'} : "http://$fqdn:8888";
+my $READERSTATS_URL = exists $ENV{'readerstats_url'} ? $ENV{'readerstats_url'} : "oscamapi.html?part=readerstats&label=<readername>";
+my $STATUS_URL = exists $ENV{'status_url'} ? $ENV{'status_url'} : "oscamapi.html?part=status&appendlog=0";
+
+# Define URLS
+my $URL = "$HOST/$READERSTATS_URL";
+my $STATS_URL = "$HOST/$STATUS_URL";
+
+## The default user agent is oscam-status-verifier/0.1 if different
+## set it in the environment.
+my $UA = exists $ENV{'ua'} ? $ENV{'ua'} : 'oscam-munin-verifier/0.1';
+
+# Oscam Username and Password
+my $USERNAME = exists $ENV{'username'} ? $ENV{'username'} : 'root';
+my $PASSWORD = exists $ENV{'password'} ? $ENV{'password'} : 'oscam';
+
+# Suggest Mode: Get Filename User/Client
+my $name = "no-reader-was-defined";
+if ( ($0 =~ /oscam_readerstats_(.+)*$/) and (defined $1) )
+{
+	$name = $1;
+}
+
+# Replace readername in link
+$URL=~s/<readername>/$name/ig;
+
+# Extract XML and show results
+########################################################################################
+sub get_xml
+{
+  my ( $CONTENT, $MODE, $NAME ) = @_;
+
+  # apt-get install libxml-libxml-perl
+  # Or with cpan -> install XML::LibXML
+  use XML::LibXML;
+  my $parser = XML::LibXML->new();
+  my $doc = $parser->load_xml(string=>$CONTENT);
+
+  # Get Client Information - Uses $STATUS_URL
+  if ($MODE eq 'suggest')
+  {
+	foreach my $child ( $doc->findnodes('/oscam/status/client[@type="r"]') )
+	{
+		print $child->getAttribute('name'), "\n";
+	}
+
+  # Normal Mode
+  } else {
+
+	foreach my $user ( $doc->findnodes('/oscam/reader') )
+	{
+
+		# EMM Total Reader Values
+		print "emm_total_written.value ", $user->findvalue('/oscam/reader[@label="'. $NAME .'"]/emmstats/@totalwritten') ."\n";
+		print "emm_total_skipped.value ", $user->findvalue('/oscam/reader[@label="'. $NAME .'"]/emmstats/@totalskipped') ."\n";
+		print "emm_total_blocked.value ", $user->findvalue('/oscam/reader[@label="'. $NAME .'"]/emmstats/@totalblocked') ."\n";
+		print "emm_total_error.value ", $user->findvalue('/oscam/reader[@label="'. $NAME .'"]/emmstats/@totalerror') ."\n";
+
+		# Reader EMM Statistics
+		foreach my $child ( $user->findnodes('/oscam/reader[@label="'. $NAME .'"]/emmstats/*') )
+		{
+			if ( $child->nodeType() == XML_ELEMENT_NODE ) 
+			{
+
+				print	$child->nodeName(), '_', $child->getAttribute('type'), '_', $child->getAttribute('result'), ".", $child->textContent(), "\n";
+
+			}
+		}
+
+		# ECM Total Reader Values
+		print "ecm_count.value ", $user->findvalue('/oscam/reader[@label="'. $NAME .'"]/ecmstats/@count') ."\n";
+		print "ecm_total.value ", $user->findvalue('/oscam/reader[@label="'. $NAME .'"]/ecmstats/@totalecm') ."\n";
+
+#		# ECM Stats for Channels
+#		foreach my $child ( $user->findnodes('/oscam/reader[@label="'. $NAME .'"]/ecmstats/*') )
+#		{
+
+#			if ( $child->nodeType() == XML_ELEMENT_NODE ) 
+#			{
+
+#				print "ecm_caid.value ", $child->getAttribute('caid'), "\n";
+#				print "ecm_provid.value ",  $child->getAttribute('provid'), "\n";
+#				print "ecm_srvid.value ", $child->getAttribute('srvid'), "\n";
+#				print "ecm_avgtime.value ", $child->getAttribute('avgtime'), "\n";
+#				print "ecm_rc.value ", $child->getAttribute('rc'), "\n";
+#				print "ecm_num.value ", $child->textContent(), "\n";
+
+#			}
+
+#		}
+
+	}
+
+  }
+
+}
+
+# Connect to Oscam
+########################################################################################
+sub connect_oscam
+{
+  my ( $URL, $USERNAME, $PASSWORD, $UA, $MODE, $NAME ) = @_;
+
+  my $ua = LWP::UserAgent->new(	env_proxy => 0,	keep_alive => 0, timeout => 30 );
+
+  # Set the UA to something different from the libwww-perl.
+  # That UA is blocked.
+  $ua->agent($UA);
+  my $request = HTTP::Request->new('GET',$URL);
+
+  # authenticate
+  $request->authorization_basic($USERNAME, $PASSWORD);
+
+  # Get request
+  my $response = $ua->request($request);
+
+  # get content of response
+  my $content = $response->content();
+
+  # Connection failed
+  unless ($response->is_success and $content =~ /^<\?xml/im)
+  {
+	# Could not connect successfully and autoconf is set
+	if ($MODE eq 'autoconf') {
+		print "no (no OSCam readerstats on $URL)\n";
+		exit 1;
+
+	# Could not connect successfully and e.g. config is set
+	} else {
+
+		# EMM Total Reader Values
+		print "emm_total_written.value U\n";
+		print "emm_total_skipped.value U\n"; 
+		print "emm_total_blocked.value U\n"; 
+		print "emm_total_error.value U\n";
+
+		# EMM Error
+		print "emm_unknown_error.value U\n";
+		print "emm_unique_error.value U\n";
+		print "emm_shared_error.value U\n";
+		print "emm_global_error.value U\n";
+
+		# EMM Written
+		print "emm_unknown_written.value U\n";
+		print "emm_unique_written.value U\n";
+		print "emm_shared_written.value U\n";
+		print "emm_global_written.value U\n";
+
+		# EMM Skipped
+		print "emm_unknown_skipped.value U\n";
+		print "emm_unique_skipped.value U\n";
+		print "emm_shared_skipped.value U\n";
+		print "emm_global_skipped.value U\n";
+
+		# EMM Blocked
+		print "emm_unknown_blocked.value U\n";
+		print "emm_unique_blocked.value U\n";
+		print "emm_shared_blocked.value U\n";
+		print "emm_global_blocked.value U\n";
+
+		# ECM Total Reader Values
+		print "ecm_count.value U\n";
+		print "ecm_total.value U\n";
+
+#		# ECM Stats for one Channel
+#		print "ecm_caid.value U\n";
+#		print "ecm_provid.value U\n";
+#		print "ecm_srvid.value U\n";
+#		print "ecm_avgtime.value U\n";
+#		print "ecm_rc.value U\n";
+#		print "ecm_num.value U\n";
+
+		exit 0;
+	}
+
+  # Connection was successfull
+  } else {
+
+	# Suggest Mode
+	if ($MODE eq 'suggest') 
+	{
+		get_xml( $content, $MODE, $NAME );
+		exit 0;
+	}
+
+	return $content;
+  }
+}
+
+
+# AutoConf
+########################################################################################
+if ($ARGV[0] and $ARGV[0] =~ /^\s*autoconf\s*$/i) 
+{
+
+  if ($ret) {
+    print "no ($ret)\n";
+    exit 1;
+  }
+
+  # Connect to OSCam
+  my $content = connect_oscam( $URL, $USERNAME, $PASSWORD, $UA, 'autoconf', $name );
+
+  # Connection was successfully
+  print "yes\n";
+  exit 1;
+
+}
+
+# Suggest
+########################################################################################
+if ($ARGV[0] and $ARGV[0] =~ /^\s*suggest\s*$/i) 
+{
+  # Connect to OSCam
+  my $content = connect_oscam( $STATS_URL, $USERNAME, $PASSWORD, $UA, 'suggest', $name );
+
+  exit 0;
+}
+
+## Munin config method.
+########################################################################################
+if (exists $ARGV[0] and $ARGV[0] =~ /^\s*config\s*$/i) 
+{
+
+	print "graph_title OSCam readerstats\n";
+	print "graph_args --base 1000 -r --logarithmic\n";
+	print "graph_category oscam\n";
+	print "graph_vlabel %\n";
+	print "graph_scale no\n";
+	print "graph_info Stats for every reader\n";
+	print "graph_period second\n";
+
+	# Total EMM Values
+	print "emm_total_written.draw LINE2\n";
+	print "emm_total_written.label total_written\n";
+	print "emm_total_written.min 0\n";
+	print "emm_total_written.type DERIVE\n";
+	print "emm_total_written.info Entitlement Management Message (EMM) total written\n";
+
+	print "emm_total_skipped.draw LINE2\n";
+	print "emm_total_skipped.label total_skipped\n";
+	print "emm_total_skipped.min 0\n";
+	print "emm_total_skipped.type DERIVE\n";
+	print "emm_total_skipped.info Entitlement Management Message (EMM) total skipped\n";
+
+	print "emm_total_blocked.draw LINE2\n";
+	print "emm_total_blocked.label total_blocked\n";
+	print "emm_total_blocked.min 0\n";
+	print "emm_total_blocked.type DERIVE\n";
+	print "emm_total_blocked.info Entitlement Management Message (EMM) total blocked\n";
+
+	print "emm_total_error.draw LINE2\n";
+	print "emm_total_error.label total_errors\n";
+	print "emm_total_error.min 0\n";
+	print "emm_total_error.type DERIVE\n";
+	print "emm_total_error.info Entitlement Management Message (EMM) total errors\n";
+
+	# EMM Error Values
+	print "emm_unknown_error.draw LINE2\n";
+	print "emm_unknown_error.label unknown_error\n";
+	print "emm_unknown_error.min 0\n";
+	print "emm_unknown_error.type DERIVE\n";
+	print "emm_unknown_error.info Entitlement Management Message (EMM) unknow errors\n";
+
+	print "emm_unique_error.draw LINE2\n";
+	print "emm_unique_error.label unique_error\n";
+	print "emm_unique_error.min 0\n";
+	print "emm_unique_error.type DERIVE\n";
+	print "emm_unique_error.info Entitlement Management Message (EMM) unique errors\n";
+
+	print "emm_shared_error.draw LINE2\n";
+	print "emm_shared_error.label shared_error\n";
+	print "emm_shared_error.min 0\n";
+	print "emm_shared_error.type DERIVE\n";
+	print "emm_shared_error.info Entitlement Management Message (EMM) shared errors\n";
+
+	print "emm_global_error.draw LINE2\n";
+	print "emm_global_error.label global_error\n";
+	print "emm_global_error.min 0\n";
+	print "emm_global_error.type DERIVE\n";
+	print "emm_global_error.info Entitlement Management Message (EMM) global errors\n";
+
+	# EMM Written
+	print "emm_unknown_written.draw LINE2\n";
+	print "emm_unknown_written.label unknown_written\n";
+	print "emm_unknown_written.min 0\n";
+	print "emm_unknown_written.type DERIVE\n";
+	print "emm_unknown_written.info Entitlement Management Message (EMM) unknown written\n";
+
+	print "emm_unique_written.draw LINE2\n";
+	print "emm_unique_written.label unique_written\n";
+	print "emm_unique_written.min 0\n";
+	print "emm_unique_written.type DERIVE\n";
+	print "emm_unique_written.info Entitlement Management Message (EMM) unique written\n";
+
+	print "emm_shared_written.draw LINE2\n";
+	print "emm_shared_written.label shared_written\n";
+	print "emm_shared_written.min 0\n";
+	print "emm_shared_written.type DERIVE\n";
+	print "emm_shared_written.info Entitlement Management Message (EMM) shared written\n";
+
+	print "emm_global_written.draw LINE2\n";
+	print "emm_global_written.label global_written\n";
+	print "emm_global_written.min 0\n";
+	print "emm_global_written.type DERIVE\n";
+	print "emm_global_written.info Entitlement Management Message (EMM) global written\n";
+
+	# EMM Skipped
+	print "emm_unknown_skipped.draw LINE2\n";
+	print "emm_unknown_skipped.label unknown_skipped\n";
+	print "emm_unknown_skipped.min 0\n";
+	print "emm_unknown_skipped.type DERIVE\n";
+	print "emm_unknown_skipped.info Entitlement Management Message (EMM) unknown skipped\n";
+
+	print "emm_unique_skipped.draw LINE2\n";
+	print "emm_unique_skipped.label unique_skipped\n";
+	print "emm_unique_skipped.min 0\n";
+	print "emm_unique_skipped.type DERIVE\n";
+	print "emm_unique_skipped.info Entitlement Management Message (EMM) unique skipped\n";
+
+	print "emm_shared_skipped.draw LINE2\n";
+	print "emm_shared_skipped.label shared_skipped\n";
+	print "emm_shared_skipped.min 0\n";
+	print "emm_shared_skipped.type DERIVE\n";
+	print "emm_shared_skipped.info Entitlement Management Message (EMM) shared skipped\n";
+
+	print "emm_global_skipped.draw LINE2\n";
+	print "emm_global_skipped.label global_skipped\n";
+	print "emm_global_skipped.min 0\n";
+	print "emm_global_skipped.type DERIVE\n";
+	print "emm_global_skipped.info Entitlement Management Message (EMM) global skipped\n";
+
+	# EMM Blocked
+	print "emm_unknown_blocked.draw LINE2\n";
+	print "emm_unknown_blocked.label unknown_blocked\n";
+	print "emm_unknown_blocked.min 0\n";
+	print "emm_unknown_blocked.type DERIVE\n";
+	print "emm_unknown_blocked.info Entitlement Management Message (EMM) unknown blocked\n";
+
+	print "emm_unique_blocked.draw LINE2\n";
+	print "emm_unique_blocked.label unique_blocked\n";
+	print "emm_unique_blocked.min 0\n";
+	print "emm_unique_blocked.type DERIVE\n";
+	print "emm_unique_blocked.info Entitlement Management Message (EMM) unique blocked\n";
+
+	print "emm_shared_blocked.draw LINE2\n";
+	print "emm_shared_blocked.label shared_blocked\n";
+	print "emm_shared_blocked.min 0\n";
+	print "emm_shared_blocked.type DERIVE\n";
+	print "emm_shared_blocked.info Entitlement Management Message (EMM) shared blocked\n";
+
+	print "emm_global_blocked.draw LINE2\n";
+	print "emm_global_blocked.label global_blocked\n";
+	print "emm_global_blocked.min 0\n";
+	print "emm_global_blocked.type DERIVE\n";
+	print "emm_global_blocked.info Entitlement Management Message (EMM) global blocked\n";
+
+	# ECM Total Reader Values
+	print "ecm_count.draw LINE2\n";
+	print "ecm_count.label ecm_count\n";
+	print "ecm_count.min 0\n";
+	print "ecm_count.type DERIVE\n";
+	print "ecm_count.info Entitlement Control Message (ECM) count\n";
+
+	print "ecm_total.draw LINE2\n";
+	print "ecm_total.label ecm_total\n";
+	print "ecm_total.min 0\n";
+	print "ecm_total.type DERIVE\n";
+	print "ecm_total.info Entitlement Control Message (ECM) total\n";
+
+#	# ECM Stats for each Channel
+#	print "ecm_caid.draw LINE2\n";
+#	print "ecm_caid.label ecm_caid\n";
+#	print "ecm_caid.min 0\n";
+#	print "ecm_caid.type DERIVE\n";
+#	print "ecm_caid.info Entitlement Control Message (ECM) caid\n";
+
+#	print "ecm_provid.draw LINE2\n";
+#	print "ecm_provid.label ecm_provid\n";
+#	print "ecm_provid.min 0\n";
+#	print "ecm_provid.type DERIVE\n";
+#	print "ecm_provid.info Entitlement Control Message (ECM) provider ID\n";
+
+#	print "ecm_srvid.draw LINE2\n";
+#	print "ecm_srvid.label ecm_srvid\n";
+#	print "ecm_srvid.min 0\n";
+#	print "ecm_srvid.type DERIVE\n";
+#	print "ecm_srvid.info Entitlement Control Message (ECM) service ID\n";
+
+#	print "ecm_avgtime.draw LINE2\n";
+#	print "ecm_avgtime.label ecm_avgtime\n";
+#	print "ecm_avgtime.min 0\n";
+#	print "ecm_avgtime.type DERIVE\n";
+#	print "ecm_avgtime.info Entitlement Control Message (ECM) average time\n";
+
+#	print "ecm_rc.draw LINE2\n";
+#	print "ecm_rc.label ecm_rc\n";
+#	print "ecm_rc.min 0\n";
+#	print "ecm_rc.type DERIVE\n";
+#	print "ecm_rc.info Entitlement Control Message (ECM) rc\n";
+
+#	print "ecm_num.draw LINE2\n";
+#	print "ecm_num.label ecm_num\n";
+#	print "ecm_num.min 0\n";
+#	print "ecm_num.type DERIVE\n";
+#	print "ecm_num.info Entitlement Control Message (ECM) number\n";
+
+	exit 0;
+
+}
+
+# Connect to OSCam
+########################################################################################
+my $content = connect_oscam( $URL, $USERNAME, $PASSWORD, $UA, 'standard', $name );
+get_xml( $content, 'standard', $name );
+

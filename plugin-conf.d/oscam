@@ -1,0 +1,19 @@
+[oscam_*]
+env.host http://localhost:8888
+env.ua oscam-status-verifier/0.1
+env.username root
+env.password oscam
+env.status_url oscamapi.html?part=status&appendlog=0
+
+[oscam_userstats_*]
+env.userstats_url oscamapi.html?part=userstats
+group user
+
+[oscam_totalstats]
+env.totalstats_url oscamapi.html?part=userstats
+
+[oscam_uptime]
+env.uptime_url oscamapi.html?part=status
+
+[oscam_readerstats_*]
+env.readerstats_url oscamapi.html?part=readerstats&label=<readername>

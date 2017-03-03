@@ -1,0 +1,306 @@
+#!/usr/bin/perl -w
+# -*- mode: cperl; mode: autopair -*-
+# Magic markers:
+#%# family=auto
+#%# capabilities=autoconf
+# oscam_totalstats --- Determine the current global stat rates for OSCam.
+
+# Copyright (C) 2013 MoonMaker <moonmaker@gmx.de>
+
+# Author: MoonMaker <moonmaker@gmx.de>
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+# .
+# This package is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+# .
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/>.
+# .
+# On Debian systems, the complete text of the GNU General
+# Public License version 3 can be found in "/usr/share/common-licenses/GPL-3".
+
+=head1 NAME
+
+oscam_totalstats - Plugin to monitor OSCam totalstats.
+=encoding utf8
+
+=head1 APPLICABLE SYSTEMS
+
+Any oscam host
+
+=head1 CONFIGURATION
+
+To monitor a user link oscam_userstats_<service> to this file. E.g.
+
+  ln -s /usr/share/munin/plugins/oscam_totalstats /etc/munin/plugins/oscam_totalstats
+
+This shows the default configuration of this plugin. You can override
+the status URL and User Agent.
+
+  [oscam_*]
+  env.host http://localhost:8888
+  env.ua oscam-status-verifier/0.1
+  env.username root
+  env.password oscam
+
+  [oscam_userstats_*]
+  env.userstats_url oscamapi.html?part=userstats
+  group user
+
+  [oscam_totalstats]
+  env.totalstats_url oscamapi.html?part=userstats
+
+  [oscam_uptime]
+  env.uptime_url oscamapi.html?part=status
+
+=head1 MAGIC MARKERS
+
+  #%# family=auto
+  #%# capabilities=autoconf
+
+=head1 VERSION
+
+1.1
+
+=head1 BUGS
+
+None known
+
+=head1 AUTHOR
+
+MoonMaker <moonmaker@gmx.de>
+
+=head1 REPOSITORY
+
+Source code at https://code.launchpad.net/~oscam/+junk/oscam-munin
+
+=head1 LICENSE
+
+GPLv3 (http://www.gnu.org/licenses/gpl.txt)
+
+=cut
+
+use Munin::Plugin;
+
+
+my $ret = undef;
+
+if (! eval "require LWP::UserAgent;") {
+  $ret = "LWP::UserAgent not found";
+}
+
+if (! eval "require XML::LibXML;") {
+  $ret = "XML::LibXML not found";
+}
+
+chomp(my $fqdn=`hostname -f`);
+
+## Environment defined variables.
+## The default URL is oscamapi.html?part=userstats if different set it in the environment.
+my $HOST = exists $ENV{'host'} ? $ENV{'host'} : "http://$fqdn:8888";
+my $TOTALSTATS_URL = exists $ENV{'totalstats_url'} ? $ENV{'totalstats_url'} : "oscamapi.html?part=userstats";
+my $URL = "$HOST/$TOTALSTATS_URL";
+
+## The default user agent is oscam-status-verifier/0.1 if different
+## set it in the environment.
+my $UA = exists $ENV{'ua'} ? $ENV{'ua'} : 'oscam-munin-verifier/0.1';
+
+# Oscam Username and Password
+my $USERNAME = exists $ENV{'username'} ? $ENV{'username'} : 'root';
+my $PASSWORD = exists $ENV{'password'} ? $ENV{'password'} : 'oscam';
+
+# Extract XML and show results
+sub get_xml
+{
+  my ( $CONTENT, $MODE ) = @_;
+
+  # apt-get install libxml-libxml-perl
+  # Or with cpan -> install XML::LibXML
+  use XML::LibXML;
+  my $parser = XML::LibXML->new();
+  my $doc = $parser->load_xml(string=>$CONTENT);
+
+  # Total Statistic
+  unless ($MODE eq 'suggest')
+  {
+    foreach my $totals ( $doc->findnodes('/oscam/totals/*'))
+    {
+	if ( $totals->nodeType() == XML_ELEMENT_NODE ) 
+	{
+		print $totals->nodeName(), ".value ", $totals->textContent(), "\n";
+	}
+    }
+  }
+
+}
+
+# Connect to Oscam
+sub connect_oscam
+{
+  my ( $URL, $USERNAME, $PASSWORD, $UA, $MODE ) = @_;
+
+  my $ua = LWP::UserAgent->new(	env_proxy => 0,	keep_alive => 0, timeout => 30 );
+
+  # Set the UA to something different from the libwww-perl.
+  # That UA is blocked.
+  $ua->agent($UA);
+  my $request = HTTP::Request->new('GET',$URL);
+
+  # authenticate
+  $request->authorization_basic($USERNAME, $PASSWORD);
+
+  # Get request
+  my $response = $ua->request($request);
+
+  # get content of response
+  my $content = $response->content();
+
+  # Connection failed
+  unless ($response->is_success and $content =~ /^<\?xml/im)
+  {
+	# Could not connect successfully and autoconf is set
+	if ($MODE eq 'autoconf') {
+		print "no (no OSCam userstats on $URL)\n";
+		exit 1;
+
+	# Could not connect successfully and e.g. config is set
+	} else {
+
+		# Total Statistic
+		print "cwok.value U\n";
+		print "cwnok.value U\n";
+		print "cwignore.value U\n";
+		print "cwtimeout.value U\n";
+		print "cwcache.value U\n";
+		print "cwtun.value U\n";
+		print "usertotal.value U\n";
+		print "userdisabled.value U\n";
+		print "userexpired.value U\n";
+		print "useractive.value U\n";
+		print "userconnected.value U\n";
+		print "useronline.value U\n";
+
+		exit 0;
+	}
+
+  # Connection was successfull
+  } else {
+
+	return $content;
+  }
+}
+
+
+# AutoConf
+if ($ARGV[0] and $ARGV[0] =~ /^\s*autoconf\s*$/i) {
+
+  if ($ret) {
+    print "no ($ret)\n";
+    exit 1;
+  }
+
+  # Connect to OSCam
+  my $content = connect_oscam( $URL, $USERNAME, $PASSWORD, $UA, 'autoconf' );
+
+  # Connection was successfully
+  print "yes\n";
+  exit 1;
+
+}
+
+## Munin config method.
+if (exists $ARGV[0] and $ARGV[0] =~ /^\s*config\s*$/i) {
+  print "graph_title OSCam userstats\n";
+  print "graph_args --base 1000 -r --logarithmic\n";
+  print "graph_category oscam\n";
+  print "graph_vlabel %\n";
+  print "graph_scale no\n";
+  print "graph_info Stats for every client\n";
+  print "graph_period secondn";
+
+# Total Statistics
+  print "cwok.draw LINE2\n";
+  print "cwok.label cwok\n";
+  print "cwok.min 0\n";
+  print "cwok.type DERIVE\n";
+  print "cwok.info Control Words (CWs) found\n";
+
+  print "cwnok.draw LINE2\n";
+  print "cwnok.label cwnok\n";
+  print "cwnok.min 0\n";
+  print "cwnok.type DERIVE\n";
+  print "cwnok.info Control Words (CWs) not found\n";
+
+  print "cwignore.draw LINE2\n";
+  print "cwignore.label cwignore\n";
+  print "cwignore.min 0\n";
+  print "cwignore.type DERIVE\n";
+  print "cwignore.info Control Words (CWs) ignore\n";
+
+  print "cwtimeout.draw LINE2\n";
+  print "cwtimeout.label cwtimeout\n";
+  print "cwtimeout.min 0\n";
+  print "cwtimeout.type DERIVE\n";
+  print "cwtimeout.info Control Words (CWs) timeout\n";
+
+  print "cwcache.draw LINE2\n";
+  print "cwcache.label cwcache\n";
+  print "cwcache.min 0\n";
+  print "cwcache.type DERIVE\n";
+  print "cwcache.info Control Words (CWs) from cache\n";
+
+  print "cwtun.draw LINE2\n";
+  print "cwtun.label cwtun\n";
+  print "cwtun.min 0\n";
+  print "cwtun.type DERIVE\n";
+  print "cwtun.info Control Words (CWs) tunneled\n";
+
+  print "usertotal.draw LINE2\n";
+  print "usertotal.label usertotal\n";
+  print "usertotal.min 0\n";
+  print "usertotal.type DERIVE\n";
+  print "usertotal.info Number of users\n";
+
+  print "userdisabled.draw LINE2\n";
+  print "userdisabled.label userdisabled\n";
+  print "userdisabled.min 0\n";
+  print "userdisabled.type DERIVE\n";
+  print "userdisabled.info Disabled users\n";
+
+  print "userexpired.draw LINE2\n";
+  print "userexpired.label userexpired\n";
+  print "userexpired.min 0\n";
+  print "userexpired.type DERIVE\n";
+  print "userexpired.info Expired users\n";
+
+  print "useractive.draw LINE2\n";
+  print "useractive.label useractive\n";
+  print "useractive.min 0\n";
+  print "useractive.type DERIVE\n";
+  print "useractive.info Active users\n";
+
+  print "userconnected.draw LINE2\n";
+  print "userconnected.label userconnected\n";
+  print "userconnected.min 0\n";
+  print "userconnected.type DERIVE\n";
+  print "userconnected.info Connected users\n";
+
+  print "useronline.draw LINE2\n";
+  print "useronline.label useronline\n";
+  print "useronline.min 0\n";
+  print "useronline.type DERIVE\n";
+  print "useronline.info User online\n";
+
+  exit 0;
+}
+
+# Connect to OSCam
+my $content = connect_oscam( $URL, $USERNAME, $PASSWORD, $UA, 'standard' );
+get_xml( $content, 'standard' );
+
